@@ -68,8 +68,10 @@ Other targets: `make migrate-down` (roll back one), `make migrate-down-all`, `ma
 ## 6. Start the API
 
 ```
-cd backend && go run ./cmd/api
+make run
 ```
+
+(equivalent to `cd backend && go run ./cmd/api`.)
 
 It prints the loaded config (port, log level) and, as backlog issues wire up real HTTP handling,
 will start serving on `HTTP_PORT` (default `8080`).
@@ -88,20 +90,17 @@ cd frontend/checkout-widget && npm install && npm run dev
 
 ## 8. Run the test suites
 
-Backend:
-
 ```
-cd backend && go vet ./... && go build ./... && go test ./...
-```
-
-Each frontend app (repeat per app — `dashboard`, `admin`, `checkout-widget`):
-
-```
-cd frontend/<app> && npm run lint && npm run typecheck && npm run test && npm run build
+make lint
+make test
 ```
 
-This mirrors exactly what `.github/workflows/backend-ci.yml` and `.github/workflows/frontend-ci.yml`
-run in CI, so a clean run locally means CI will pass too.
+`make lint` runs `golangci-lint` on the backend, `eslint` + a prettier formatting check on every
+frontend app; `make test` runs `go test` on the backend and `vitest` on every frontend app. These
+are the same targets `.github/workflows/backend-ci.yml` and `.github/workflows/frontend-ci.yml`
+call, so a clean run locally means CI will pass too. Run `make help` to see every target,
+including the single-app variants (e.g. `make test-frontend-app APP=dashboard`) CI uses under the
+hood, and `make build` to build everything without running tests.
 
 ## 9. Install the formatting pre-commit hook (recommended)
 

@@ -47,17 +47,23 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Vet
-        run: cd backend && go vet ./...
+        run: make vet
 
-      - name: Lint
+      # Installs (and caches) the golangci-lint binary only; the actual
+      # lint run goes through `make lint-backend` below, so CI runs the
+      # exact same command a contributor runs locally.
+      - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: backend
-          args: --timeout=5m
+          install-only: true
+
+      - name: Lint
+        run: make lint-backend
 
       - name: Build
-        run: cd backend && go build ./...
+        run: make build-backend
 
       # Migrations run before the test step so any integration tests that
       # hit Postgres (as they're added in later issues) see an up-to-date
@@ -66,4 +72,4 @@ jobs:
         run: make migrate-up
 
       - name: Test
-        run: cd backend && go test ./...
+        run: make test-backend

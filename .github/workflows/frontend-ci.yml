@@ -5,10 +5,12 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
+      - "Makefile"
   pull_request:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
+      - "Makefile"
 
 jobs:
   lint-typecheck-test-build:
@@ -31,22 +33,22 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/${{ matrix.app }}/package-lock.json
 
+      # Each step below runs through the same Makefile target a contributor
+      # would call locally (e.g. `make lint-frontend-app APP=dashboard`), so
+      # CI and local dev never drift apart. The targets `cd` into
+      # frontend/${{ matrix.app }} themselves and each (re-)installs deps
+      # via `npm ci` first, so this is safe to re-run.
       - name: Install dependencies
-        working-directory: frontend/${{ matrix.app }}
-        run: npm ci
+        run: make install-frontend-app APP=${{ matrix.app }}
 
       - name: Lint
-        working-directory: frontend/${{ matrix.app }}
-        run: npm run lint
+        run: make lint-frontend-app APP=${{ matrix.app }}
 
       - name: Typecheck
-        working-directory: frontend/${{ matrix.app }}
-        run: npm run typecheck
+        run: make typecheck-frontend-app APP=${{ matrix.app }}
 
       - name: Test
-        working-directory: frontend/${{ matrix.app }}
-        run: npm run test
+        run: make test-frontend-app APP=${{ matrix.app }}
 
       - name: Build
-        working-directory: frontend/${{ matrix.app }}
-        run: npm run build
+        run: make build-frontend-app APP=${{ matrix.app }}
