@@ -4,7 +4,10 @@ go 1.23.0
 
 toolchain go1.23.4
 
-require github.com/golang-migrate/migrate/v4 v4.18.3
+require (
+	github.com/golang-migrate/migrate/v4 v4.18.3
+	github.com/joho/godotenv v1.5.1
+)
 
 require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
