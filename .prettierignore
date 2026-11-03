@@ -1,0 +1,17 @@
+# Build output and dependencies (also covered by .gitignore, listed here
+# too so `prettier --check .` / `--write .` stay fast and don't descend
+# into them).
+node_modules/
+frontend/**/dist/
+frontend/**/.vite/
+
+# Lockfiles and generated TS build-info: machine-written, not hand-edited.
+package-lock.json
+*.tsbuildinfo
+
+# Backend is Go, not something prettier formats; gofmt covers it instead.
+backend/
+
+# Generated/reviewed-as-data backlog files (scripts/create_github_issues.py
+# writes these; reformatting them is not this hook's job).
+issues/

@@ -42,6 +42,31 @@ To override the credentials, db name, or host port, copy `infra/.env.example` to
 edit it — `docker compose` picks up a `.env` file in the same directory as the compose file
 automatically.
 
+## Pre-commit formatting hook
+
+Install the formatting pre-commit hook with one command:
+
+```
+make install-hooks
+```
+
+This installs the root `prettier` dependency and points git at `.githooks`
+(via `git config core.hooksPath`), so every `git commit` from then on runs
+[`.githooks/pre-commit`](.githooks/pre-commit): it runs `gofmt -l` on staged
+`backend/**/*.go` files and `prettier --list-different` on staged
+`frontend/**` source files, and blocks the commit (listing which files)
+if any of them would be reformatted. It only looks at staged files, so it
+stays well under a second on a typical small diff.
+
+To fix a blocked commit, format the listed files (`gofmt -w <file>` /
+`node_modules/.bin/prettier --write <file>`, or `npm run format` at the repo
+root for everything prettier covers) and re-stage them. To skip the hook for
+one commit (e.g. a WIP commit on a branch), use:
+
+```
+git commit --no-verify
+```
+
 ## Status
 
 Design phase. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design and

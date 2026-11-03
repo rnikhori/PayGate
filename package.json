@@ -1,0 +1,13 @@
+{
+  "name": "paygate-repo-tooling",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Repo-root tooling only (e.g. prettier for the pre-commit hook). Not published; the actual apps live under frontend/*.",
+  "scripts": {
+    "format": "prettier --write frontend",
+    "format:check": "prettier --check frontend"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3"
+  }
+}

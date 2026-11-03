@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# PayGate pre-commit hook: blocks commits that would change the formatting
+# of staged files.
+#
+# Install (one-line): make install-hooks
+# Skip for one commit: git commit --no-verify
+#
+# Checks:
+#   - staged backend/**/*.go       -> gofmt -l
+#   - staged frontend/** source    -> prettier --list-different
+#
+# Only staged files are checked (not the whole tree), and only files that
+# already have content staged (not deleted ones), so this stays fast on a
+# typical small diff.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# NUL-delimited (via `read -d ''`, not `mapfile`/`readarray`, since macOS's
+# default /bin/bash is 3.2 and lacks both) to stay correct for paths with
+# spaces.
+GO_FILES=()
+FE_FILES=()
+while IFS= read -r -d '' f; do
+  case "$f" in
+    backend/*.go) GO_FILES+=("$f") ;;
+    frontend/*)
+      case "$f" in
+        */node_modules/*|*/dist/*|*/.vite/*) ;; # skip generated paths
+        *.ts|*.tsx|*.js|*.jsx|*.json|*.css) FE_FILES+=("$f") ;;
+      esac
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+FAIL=0
+
+if [ "${#GO_FILES[@]}" -gt 0 ]; then
+  UNFORMATTED="$(gofmt -l "${GO_FILES[@]}")"
+  if [ -n "$UNFORMATTED" ]; then
+    echo "gofmt: these staged Go files are not formatted:"
+    echo "$UNFORMATTED" | sed 's/^/  /'
+    echo "Fix with: gofmt -w <file>, then re-stage."
+    FAIL=1
+  fi
+fi
+
+if [ "${#FE_FILES[@]}" -gt 0 ]; then
+  PRETTIER="node_modules/.bin/prettier"
+  if [ ! -x "$PRETTIER" ]; then
+    echo "prettier is not installed at the repo root (needed for the frontend formatting check)."
+    echo "Run: npm install"
+    FAIL=1
+  else
+    BAD="$("$PRETTIER" --list-different "${FE_FILES[@]}" 2>&1 || true)"
+    if [ -n "$BAD" ]; then
+      echo "prettier: these staged frontend files are not formatted:"
+      echo "$BAD" | sed 's/^/  /'
+      echo "Fix with: $PRETTIER --write <file> (or npm run format), then re-stage."
+      FAIL=1
+    fi
+  fi
+fi
+
+if [ "$FAIL" -ne 0 ]; then
+  echo
+  echo "Commit blocked by formatting checks (see above)."
+  echo "Skip once with: git commit --no-verify"
+  exit 1
+fi
