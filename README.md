@@ -28,7 +28,10 @@ scripts/    Automation scripts (e.g. bulk-creating GitHub issues/labels/mileston
 
 ## Local development
 
-Start a local Postgres 16 instance (persisted in a named Docker volume):
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full local setup path (clone, Postgres,
+migrations, running the API and each frontend app, test suites, required tool versions, and
+troubleshooting). The short version — start a local Postgres 16 instance (persisted in a named
+Docker volume):
 
 ```
 docker compose -f infra/docker-compose.yml up -d
