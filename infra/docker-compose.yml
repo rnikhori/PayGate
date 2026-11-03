@@ -1,15 +1,19 @@
-version: "3.9"
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: paygate
-      POSTGRES_PASSWORD: paygate
-      POSTGRES_DB: paygate
+      POSTGRES_USER: ${POSTGRES_USER:-paygate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paygate}
+      POSTGRES_DB: ${POSTGRES_DB:-paygate}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - paygate_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paygate} -d ${POSTGRES_DB:-paygate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   paygate_pg_data:

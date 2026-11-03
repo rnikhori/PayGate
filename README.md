@@ -26,6 +26,22 @@ issues/     Generated GitHub issue backlog (draft, reviewed before bulk-creation
 scripts/    Automation scripts (e.g. bulk-creating GitHub issues/labels/milestones)
 ```
 
+## Local development
+
+Start a local Postgres 16 instance (persisted in a named Docker volume):
+
+```
+docker compose -f infra/docker-compose.yml up -d
+```
+
+This brings up Postgres on `localhost:5432` with user/password/db all `paygate`. Data survives
+`docker compose -f infra/docker-compose.yml down` / `up` since it's stored in the `paygate_pg_data`
+named volume (only `docker compose down -v` removes it).
+
+To override the credentials, db name, or host port, copy `infra/.env.example` to `infra/.env` and
+edit it — `docker compose` picks up a `.env` file in the same directory as the compose file
+automatically.
+
 ## Status
 
 Design phase. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design and
