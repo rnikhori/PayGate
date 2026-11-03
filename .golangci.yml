@@ -1,0 +1,49 @@
+# golangci-lint configuration for the PayGate backend (schema version 2,
+# matching the golangci-lint release the backend CI workflow installs via
+# `version: latest` in .github/workflows/backend-ci.yml).
+#
+# Scope for this issue is intentionally small: enable the four linters named
+# in the backlog item (govet, staticcheck, errcheck, unused) rather than
+# golangci-lint's full "standard" default set. Widening linter coverage is
+# left to a follow-up infra issue so each change stays reviewable.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Start from nothing and opt in explicitly, rather than from the
+  # "standard" preset, so the enabled set matches exactly what this issue
+  # asks for and nothing enables itself silently on a golangci-lint upgrade.
+  default: none
+
+  enable:
+    # Catches suspicious constructs the compiler allows but are almost
+    # always bugs: bad printf verbs, lock-by-value, unreachable code, etc.
+    - govet
+    # staticcheck's full rule set: simplifications, style, and correctness
+    # checks (SA/S/ST/QF classes). Also covers what used to be the separate
+    # "gosimple" linter in golangci-lint v1.
+    - staticcheck
+    # Flags ignored error return values, which matter a lot in a payments
+    # codebase where a swallowed error can mean money silently not moving.
+    - errcheck
+    # Flags unused constants, variables, functions and types so dead code
+    # (left over from refactors) doesn't accumulate.
+    - unused
+
+  # Linters golangci-lint would otherwise enable by default, left off on
+  # purpose for now:
+  #   - ineffassign: overlaps heavily with staticcheck's SA4006 (ineffectual
+  #     assignment) on this codebase; enabling both just doubles up findings
+  #     for the same bug. Revisit if staticcheck's coverage proves
+  #     insufficient on its own.
+  # Everything else in golangci-lint's broader "all"/"standard" presets
+  # (style-only linters like revive, lll, gocyclo, etc.) is out of scope for
+  # this issue, which only asks for a baseline correctness-focused set.
+
+issues:
+  # Still check generated and vendored-style files if any show up later;
+  # none exist yet, so this has no effect today but avoids a silent
+  # coverage gap if one is added without updating this config.
+  exclude-dirs-use-default: true
