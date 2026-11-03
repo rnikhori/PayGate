@@ -1,0 +1,52 @@
+name: Frontend CI
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+
+jobs:
+  lint-typecheck-test-build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [dashboard, admin, checkout-widget]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          # Caches npm's download cache between runs, keyed on each app's
+          # own lockfile so one app's dependency bump doesn't invalidate
+          # the others' cache.
+          cache: npm
+          cache-dependency-path: frontend/${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend/${{ matrix.app }}
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend/${{ matrix.app }}
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: frontend/${{ matrix.app }}
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: frontend/${{ matrix.app }}
+        run: npm run test
+
+      - name: Build
+        working-directory: frontend/${{ matrix.app }}
+        run: npm run build
