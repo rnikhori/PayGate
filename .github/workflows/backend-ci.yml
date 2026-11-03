@@ -40,6 +40,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          # Caches the module download cache and build cache between runs,
+          # keyed on backend/go.sum, so unaffected packages aren't rebuilt
+          # from scratch on every push.
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Vet
+        run: cd backend && go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: backend
+          args: --timeout=5m
 
       - name: Build
         run: cd backend && go build ./...
