@@ -1,0 +1,54 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+      - "Makefile"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+      - "Makefile"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: paygate
+          POSTGRES_PASSWORD: paygate
+          POSTGRES_DB: paygate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paygate -d paygate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://paygate:paygate@localhost:5432/paygate?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Build
+        run: cd backend && go build ./...
+
+      # Migrations run before the test step so any integration tests that
+      # hit Postgres (as they're added in later issues) see an up-to-date
+      # schema, the same way a developer's local `make migrate-up` would.
+      - name: Run migrations
+        run: make migrate-up
+
+      - name: Test
+        run: cd backend && go test ./...

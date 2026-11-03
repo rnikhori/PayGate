@@ -1,0 +1,1 @@
+-- Down side of the empty baseline migration. Nothing to undo.

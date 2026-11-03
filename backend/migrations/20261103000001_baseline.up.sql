@@ -1,0 +1,7 @@
+-- Baseline migration.
+--
+-- Intentionally empty. Its only purpose is to prove golang-migrate is wired
+-- up end-to-end: running `make migrate-up` against a fresh database creates
+-- golang-migrate's schema_migrations tracking table and records this version
+-- as applied. The first real schema (ledger accounts, journal entries, etc.)
+-- lands in its own migration in a later issue.
