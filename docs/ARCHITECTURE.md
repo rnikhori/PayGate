@@ -100,6 +100,17 @@ is a computed view (`SUM(journal_entries) WHERE account = merchant_payable:<id>`
 counter — this is what makes the system auditable and what most of the "Core Ledger" epic issues
 are about.
 
+`journal_entries` (`backend/migrations/*_create_journal_entries`) is append-only: every row has a
+`transaction_ref` (groups the legs of one transaction), `account_id` (references
+`ledger_accounts`), a signed `amount` (smallest currency unit, e.g. paise), `currency`
+(ISO 4217), and `created_at`. A deferred constraint trigger checks, at commit, that every
+`transaction_ref` has ≥2 rows summing to zero per currency; a second trigger unconditionally
+rejects UPDATE/DELETE on the table, regardless of role, since Postgres lets a table's owner
+bypass GRANT/REVOKE. A `paygate_app` DB role is created with only `SELECT`/`INSERT` on the
+table — no role is ever granted `UPDATE`/`DELETE` — so that once the API's runtime connection
+is switched to that role (a later deployment issue), the restriction holds without the trigger
+too. Corrections are always a new, separately balanced transaction, never an edit to history.
+
 ## 4. API design principles
 
 - **Auth:** HTTP Basic with `key_id`/`key_secret` for server-to-server (mirrors Razorpay); session
