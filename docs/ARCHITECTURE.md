@@ -111,6 +111,14 @@ table — no role is ever granted `UPDATE`/`DELETE` — so that once the API's r
 is switched to that role (a later deployment issue), the restriction holds without the trigger
 too. Corrections are always a new, separately balanced transaction, never an edit to history.
 
+`ledger.PostJournalEntry(ctx, db, transactionRef, entries)` (`backend/internal/ledger/post.go`) is
+the single write path every other package must call to move money — no other package inserts
+into `journal_entries` directly. It re-checks the balance rule in Go before issuing any SQL (so an
+unbalanced call makes no partial write and returns a domain error,
+`ledger.ErrUnbalancedTransaction`, distinct from a database error), then writes every entry for
+one `transaction_ref` inside a single DB transaction and commits once, which is what lets the
+deferred constraint trigger above verify the whole set.
+
 ## 4. API design principles
 
 - **Auth:** HTTP Basic with `key_id`/`key_secret` for server-to-server (mirrors Razorpay); session

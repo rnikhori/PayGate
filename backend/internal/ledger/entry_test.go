@@ -1,6 +1,9 @@
 package ledger
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestValidateBalancedTransactionAcceptsTwoLegBalancedEntries(t *testing.T) {
 	entries := []Entry{
@@ -43,8 +46,12 @@ func TestValidateBalancedTransactionRejectsUnbalancedSum(t *testing.T) {
 		{TransactionRef: "txn_4", AccountID: 1, Amount: 10000, Currency: "INR"},
 		{TransactionRef: "txn_4", AccountID: 2, Amount: -9000, Currency: "INR"},
 	}
-	if err := ValidateBalancedTransaction(entries); err == nil {
-		t.Error("ValidateBalancedTransaction() = nil error, want an error for an unbalanced sum")
+	err := ValidateBalancedTransaction(entries)
+	if err == nil {
+		t.Fatal("ValidateBalancedTransaction() = nil error, want an error for an unbalanced sum")
+	}
+	if !errors.Is(err, ErrUnbalancedTransaction) {
+		t.Errorf("ValidateBalancedTransaction() error = %v, want it to wrap ErrUnbalancedTransaction", err)
 	}
 }
 

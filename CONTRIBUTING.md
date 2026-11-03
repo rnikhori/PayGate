@@ -147,3 +147,17 @@ re-stage, or skip once with `git commit --no-verify`.
 
 Each frontend app has its own `package-lock.json`; run `npm install` (or `npm ci` to match CI
 exactly) from inside that app's directory, not the repo root.
+
+## 10. Code review checklist
+
+A short list of repo-wide invariants that are easy to break in a PR and aren't all caught by
+`make lint` / `make test`. Check these on every review, not just when touching the area they
+name:
+
+- **Ledger writes go through `ledger.PostJournalEntry` only.** No package outside
+  `backend/internal/ledger` may `INSERT INTO journal_entries` (directly or via a raw query
+  helper) — `PostJournalEntry` is the single place that checks the double-entry balance rule in
+  Go before writing, and it's what every other service must call to move money. `make
+  lint-ledger-writes` (part of `make lint-backend` / `make lint`) greps for that literal SQL
+  pattern outside `backend/internal/ledger/` and fails the build if it finds one, but review the
+  diff too: a grep can't see a query assembled from concatenated pieces.

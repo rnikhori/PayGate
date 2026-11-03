@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
@@ -50,6 +51,15 @@ func ValidateCurrencyCode(currency string) error {
 	return nil
 }
 
+// ErrUnbalancedTransaction is the domain error ValidateBalancedTransaction
+// (and PostJournalEntry, see post.go) wraps into its returned error when
+// entries fail to sum to zero for some currency. It is distinct from any
+// error the database itself can return (a connection failure, a constraint
+// violation unrelated to balance, ...), so a caller can tell "this
+// transaction was rejected because it was unbalanced" apart from "the write
+// failed for some other reason" with errors.Is(err, ledger.ErrUnbalancedTransaction).
+var ErrUnbalancedTransaction = errors.New("ledger: entries do not sum to zero per currency")
+
 // ValidateBalancedTransaction reports an error unless entries forms a
 // valid double-entry transaction: at least 2 rows, all sharing one
 // transaction_ref, each with a valid account id, currency, and non-zero
@@ -91,7 +101,7 @@ func ValidateBalancedTransaction(entries []Entry) error {
 
 	for currency, sum := range sums {
 		if sum != 0 {
-			return fmt.Errorf("ledger: transaction_ref %q does not sum to zero for currency %s (sum = %d)", ref, currency, sum)
+			return fmt.Errorf("ledger: transaction_ref %q does not sum to zero for currency %s (sum = %d): %w", ref, currency, sum, ErrUnbalancedTransaction)
 		}
 	}
 

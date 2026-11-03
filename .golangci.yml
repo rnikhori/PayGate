@@ -38,6 +38,13 @@ linters:
   #     assignment) on this codebase; enabling both just doubles up findings
   #     for the same bug. Revisit if staticcheck's coverage proves
   #     insufficient on its own.
+  #   - forbidigo: considered for "no package but internal/ledger may write
+  #     to journal_entries" (see the code review checklist in
+  #     CONTRIBUTING.md), but forbidigo only matches identifiers/call
+  #     expressions, not arbitrary string literals — confirmed locally it
+  #     does not flag a raw `INSERT INTO journal_entries` SQL string. `make
+  #     lint-ledger-writes` (wired into `make lint-backend`; see Makefile)
+  #     is the actual automated check for that rule instead.
   # Everything else in golangci-lint's broader "all"/"standard" presets
   # (style-only linters like revive, lll, gocyclo, etc.) is out of scope for
   # this issue, which only asks for a baseline correctness-focused set.

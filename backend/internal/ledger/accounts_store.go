@@ -18,18 +18,49 @@ type DB interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) Row
 }
 
-// sqlDB adapts *sql.DB to DB: *sql.DB's QueryRowContext returns the
-// concrete *sql.Row, which already implements Row, but Go's interfaces
-// require an exact method signature match, so this thin wrapper is what
-// actually makes *sql.DB satisfy DB.
+// Tx is the subset of *sql.Tx that PostJournalEntry (see post.go) needs to
+// write rows and then either commit or roll back, so callers can satisfy it
+// with a lightweight fake in tests instead of a live database.
+type Tx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	Commit() error
+	Rollback() error
+}
+
+// Beginner starts a database transaction. *sql.DB satisfies it via Wrap.
+type Beginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error)
+}
+
+// Conn is everything this package needs from a database handle: reading a
+// single row (DB) and starting the transaction PostJournalEntry writes every
+// entry of one logical transaction inside (Beginner). Wrap adapts a *sql.DB
+// to it; a Conn can be passed anywhere a DB or a Beginner is expected.
+type Conn interface {
+	DB
+	Beginner
+}
+
+// sqlDB adapts *sql.DB to Conn: *sql.DB's QueryRowContext and BeginTx return
+// the concrete *sql.Row / *sql.Tx, which already implement Row / Tx, but
+// Go's interfaces require an exact method signature match, so this thin
+// wrapper is what actually makes *sql.DB satisfy Conn.
 type sqlDB struct{ *sql.DB }
 
 func (s sqlDB) QueryRowContext(ctx context.Context, query string, args ...any) Row {
 	return s.DB.QueryRowContext(ctx, query, args...)
 }
 
-// Wrap adapts a *sql.DB for use as a DB.
-func Wrap(db *sql.DB) DB {
+func (s sqlDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) {
+	tx, err := s.DB.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// Wrap adapts a *sql.DB for use as a Conn (satisfying both DB and Beginner).
+func Wrap(db *sql.DB) Conn {
 	return sqlDB{db}
 }
 

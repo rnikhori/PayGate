@@ -1,5 +1,5 @@
 .PHONY: help run \
-	build-backend vet lint-backend test-backend \
+	build-backend vet lint-backend lint-ledger-writes test-backend \
 	migrate-up migrate-down migrate-down-all migrate-version \
 	install-root install-hooks format format-check \
 	install-frontend-app lint-frontend-app typecheck-frontend-app test-frontend-app build-frontend-app \
@@ -35,8 +35,25 @@ run: ## Run the API server locally (reads backend/.env; see CONTRIBUTING.md)
 vet: ## go vet the backend
 	cd backend && go vet ./...
 
-lint-backend: ## golangci-lint the backend (see .golangci.yml)
+lint-backend: lint-ledger-writes ## golangci-lint the backend (see .golangci.yml)
 	cd backend && golangci-lint run ./...
+
+# internal/ledger.PostJournalEntry must be the only code path that writes to
+# journal_entries (see the "Code review checklist" in CONTRIBUTING.md and
+# backend/internal/ledger/doc.go) — golangci-lint's bundled linters can't
+# express "forbid this literal SQL string outside one package" (forbidigo
+# only matches identifiers/call expressions, not string literals), so this
+# is a plain grep instead: fail if "INSERT INTO journal_entries" (or the
+# lowercase SQL-keyword spelling) shows up anywhere under backend/ other
+# than backend/internal/ledger itself.
+lint-ledger-writes: ## Fail if any package but internal/ledger writes to journal_entries
+	@matches=$$(grep -rliE 'insert[[:space:]]+into[[:space:]]+journal_entries' backend --include='*.go' | grep -v '^backend/internal/ledger/'); \
+	if [ -n "$$matches" ]; then \
+		echo "journal_entries must only be written to via ledger.PostJournalEntry (backend/internal/ledger/post.go)," >&2; \
+		echo "but found a literal INSERT outside backend/internal/ledger in:" >&2; \
+		echo "$$matches" >&2; \
+		exit 1; \
+	fi
 
 build-backend: ## go build the backend
 	cd backend && go build ./...
