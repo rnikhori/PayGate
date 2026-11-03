@@ -119,6 +119,12 @@ unbalanced call makes no partial write and returns a domain error,
 one `transaction_ref` inside a single DB transaction and commits once, which is what lets the
 deferred constraint trigger above verify the whole set.
 
+`ledger.GetBalance(ctx, db, accountID)` (`backend/internal/ledger/balance.go`) is the read side of
+the same model: `SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE account_id = $1`,
+using the index `journal_entries_account_id_idx` already creates. `ledger_accounts` has no
+`balance` column; a materialized or cached balance remains explicitly out of scope until a later
+issue deliberately adds one.
+
 ## 4. API design principles
 
 - **Auth:** HTTP Basic with `key_id`/`key_secret` for server-to-server (mirrors Razorpay); session
