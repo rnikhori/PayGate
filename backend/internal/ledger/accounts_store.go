@@ -101,3 +101,30 @@ func EnsureMerchantPayableAccount(ctx context.Context, db DB, merchantID string)
 	a.Type = AccountType(accType)
 	return a, nil
 }
+
+// GetAccountByCode looks up a ledger_accounts row by its code — the way
+// callers are expected to refer to the fixed system accounts (see
+// account.go's CustomerSuspenseAccountCode, GatewayFeeRevenueAccountCode,
+// SettlementClearingAccountCode) rather than hard-coding their ids, which
+// are only assigned once, by the seed data in
+// backend/migrations/*_create_ledger_accounts, and are not otherwise
+// guaranteed to stay the same across environments.
+//
+// An unknown code is an error (sql.ErrNoRows, wrapped), not a zero Account:
+// unlike a merchant_payable:* account, none of the fixed system accounts
+// are ever created on demand, so a lookup miss here means misconfiguration,
+// not an entity that simply hasn't been created yet.
+func GetAccountByCode(ctx context.Context, db DB, code string) (Account, error) {
+	const query = `SELECT id, code, type, name, created_at FROM ledger_accounts WHERE code = $1`
+
+	var (
+		a       Account
+		accType string
+	)
+	row := db.QueryRowContext(ctx, query, code)
+	if err := row.Scan(&a.ID, &a.Code, &accType, &a.Name, &a.CreatedAt); err != nil {
+		return Account{}, fmt.Errorf("ledger: get account by code %q: %w", code, err)
+	}
+	a.Type = AccountType(accType)
+	return a, nil
+}
