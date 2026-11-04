@@ -20,8 +20,15 @@ type DB interface {
 
 // Tx is the subset of *sql.Tx that PostJournalEntry (see post.go) needs to
 // write rows and then either commit or roll back, so callers can satisfy it
-// with a lightweight fake in tests instead of a live database.
+// with a lightweight fake in tests instead of a live database. It embeds DB
+// because PostJournalEntry's idempotency guard (claimTransactionRef, in
+// post.go) must read back a journal_entry_postings row inside the very same
+// transaction the entries are about to be written in -- a separate *sql.DB
+// read would not see an uncommitted claim made moments earlier on tx, and
+// would not participate in the row-locking that makes two concurrent claims
+// of the same transaction_ref resolve safely.
 type Tx interface {
+	DB
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	Commit() error
 	Rollback() error
@@ -56,7 +63,18 @@ func (s sqlDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tx, nil
+	return sqlTx{tx}, nil
+}
+
+// sqlTx adapts *sql.Tx to Tx, the same way sqlDB adapts *sql.DB to DB:
+// *sql.Tx's ExecContext/Commit/Rollback already match Tx's signatures
+// exactly, but its QueryRowContext returns the concrete *sql.Row rather
+// than the Row interface, so this wrapper is what actually makes *sql.Tx
+// satisfy Tx now that Tx embeds DB.
+type sqlTx struct{ *sql.Tx }
+
+func (t sqlTx) QueryRowContext(ctx context.Context, query string, args ...any) Row {
+	return t.Tx.QueryRowContext(ctx, query, args...)
 }
 
 // Wrap adapts a *sql.DB for use as a Conn (satisfying both DB and Beginner).
