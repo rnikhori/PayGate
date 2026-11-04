@@ -45,26 +45,26 @@ func RefundTransactionRef(captureTransactionRef, refundRef string) (string, erro
 	return fmt.Sprintf("%s:%s:%s", refundTransactionRefPrefix, captureTransactionRef, refundRef), nil
 }
 
-// refundLikeEscaper escapes the LIKE metacharacters ('%', '_') and the
-// escape character itself ('\') in a capture's transaction_ref before it is
-// embedded in a LIKE pattern (see refundsLikePattern) — without this, a
-// capture transaction_ref that happens to contain a literal '%' or '_'
-// would match more (or differently) than the exact refunds posted against
-// it.
-var refundLikeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+// likeEscaper escapes the LIKE metacharacters ('%', '_') and the escape
+// character itself ('\') in a value before it is embedded in a LIKE
+// pattern (see refundsLikePattern, settlementsLikePattern) — without this,
+// a value that happens to contain a literal '%' or '_' would match more
+// (or differently) than intended. Shared by every LIKE-pattern-based query
+// in this package so they all escape the same way.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// likeEscapeChar is the ESCAPE character every LIKE pattern built with
+// likeEscaper uses, passed separately to the query so it never has to be
+// interpolated into SQL text.
+const likeEscapeChar = `\`
 
 // refundsLikePattern returns the LIKE pattern (with its ESCAPE character)
 // matching every transaction_ref RefundTransactionRef could have built for
 // captureTransactionRef, for any refundRef — i.e. every refund ever posted
 // against that one capture.
 func refundsLikePattern(captureTransactionRef string) string {
-	return refundTransactionRefPrefix + ":" + refundLikeEscaper.Replace(captureTransactionRef) + ":%"
+	return refundTransactionRefPrefix + ":" + likeEscaper.Replace(captureTransactionRef) + ":%"
 }
-
-// refundLikeEscapeChar is the ESCAPE character refundsLikePattern's pattern
-// is built with, passed separately to the query so it never has to be
-// interpolated into SQL text.
-const refundLikeEscapeChar = `\`
 
 // RefundContext is everything BuildRefundEntries needs to know about the
 // capture being refunded, resolved once (by ResolveRefundContext) so both
@@ -100,7 +100,7 @@ func sumEntries(ctx context.Context, db DB, accountID int64, transactionRef, lik
 	)
 	switch {
 	case likePattern != "":
-		query = `SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE account_id = $1 AND transaction_ref LIKE $2 ESCAPE '` + refundLikeEscapeChar + `'`
+		query = `SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE account_id = $1 AND transaction_ref LIKE $2 ESCAPE '` + likeEscapeChar + `'`
 		args = []any{accountID, likePattern}
 	default:
 		query = `SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE account_id = $1 AND transaction_ref = $2`
