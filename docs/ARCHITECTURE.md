@@ -95,7 +95,9 @@ created ─▶ authorized ─▶ captured ─▶ settled
 ### Ledger model
 Double-entry: every transaction posts ≥2 `JournalEntry` rows whose amounts sum to zero per
 transaction, against `LedgerAccount`s such as `merchant_payable:<merchant_id>`,
-`gateway_fee_revenue`, `customer_suspense`, `settlement_clearing`. A merchant's available balance
+`gateway_fee_revenue`, `customer_suspense`, `settlement_clearing`. See
+[`docs/LEDGER.md`](LEDGER.md) for the full chart of accounts — every account's purpose, which
+service debits/credits it and when, and a worked capture-then-refund example. A merchant's available balance
 is a computed view (`SUM(journal_entries) WHERE account = merchant_payable:<id>`), never a stored
 counter — this is what makes the system auditable and what most of the "Core Ledger" epic issues
 are about.
