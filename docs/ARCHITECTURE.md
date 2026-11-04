@@ -121,7 +121,10 @@ deferred constraint trigger above verify the whole set.
 
 `ledger.GetBalance(ctx, db, accountID)` (`backend/internal/ledger/balance.go`) is the read side of
 the same model: `SELECT COALESCE(SUM(amount), 0) FROM journal_entries WHERE account_id = $1`,
-using the index `journal_entries_account_id_idx` already creates. `ledger_accounts` has no
+covered by the leading column of the composite index
+`journal_entries_account_id_created_at_idx`
+(`backend/migrations/*_add_journal_entries_account_created_at_index`), which also serves the
+statement API's `WHERE account_id = $1 ORDER BY created_at` pattern. `ledger_accounts` has no
 `balance` column; a materialized or cached balance remains explicitly out of scope until a later
 issue deliberately adds one.
 

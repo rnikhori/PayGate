@@ -18,9 +18,10 @@ import (
 // The query filters on account_id alone (never transaction_ref, and never
 // per-currency — docs/ARCHITECTURE.md's non-goals scope PayGate to INR
 // only, so an account's postings are expected to share one currency), which
-// backend/migrations/*_create_journal_entries already indexes
-// (journal_entries_account_id_idx). This function relies on that existing
-// index rather than adding one of its own.
+// the composite index backend/migrations/*_add_journal_entries_account_created_at_index
+// creates (account_id, created_at) already covers via its leading column.
+// This function relies on that existing index rather than adding one of its
+// own.
 //
 // A materialized or cached balance is explicitly out of scope here: if a
 // future issue adds one (e.g. to avoid re-scanning a very large account on
