@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -30,18 +31,23 @@ type fakeRefundConn struct {
 
 func (f *fakeRefundConn) QueryRowContext(_ context.Context, query string, args ...any) Row {
 	// Account lookups (GetAccountByCode / EnsureMerchantPayableAccount)
-	// pass the code as their first arg, same as fakeCaptureConn.
+	// pass the code as their first arg, same as fakeCaptureConn. A miss
+	// here must report sql.ErrNoRows directly rather than falling through
+	// to the sumEntries handling below, which assumes a 2nd (accountID-
+	// keyed) arg a bare code lookup never has.
 	if code, ok := args[0].(string); ok {
-		if a, found := f.accounts[code]; found {
-			return fakeRow{scan: func(dest ...any) error {
-				*dest[0].(*int64) = a.ID
-				*dest[1].(*string) = a.Code
-				*dest[2].(*string) = string(a.Type)
-				*dest[3].(*string) = a.Name
-				*dest[4].(*time.Time) = a.CreatedAt
-				return nil
-			}}
+		a, found := f.accounts[code]
+		if !found {
+			return fakeRow{scan: func(...any) error { return sql.ErrNoRows }}
 		}
+		return fakeRow{scan: func(dest ...any) error {
+			*dest[0].(*int64) = a.ID
+			*dest[1].(*string) = a.Code
+			*dest[2].(*string) = string(a.Type)
+			*dest[3].(*string) = a.Name
+			*dest[4].(*time.Time) = a.CreatedAt
+			return nil
+		}}
 	}
 
 	// Otherwise this is a sumEntries call: args[0] is always the account
@@ -312,6 +318,68 @@ func TestResolveRefundContextRejectsEmptyCaptureRef(t *testing.T) {
 	conn := refundTestConn("mch_1", 100000, 2500, 0)
 	if _, err := ResolveRefundContext(context.Background(), conn, "mch_1", ""); err == nil {
 		t.Error("ResolveRefundContext(..., \"\") = nil error, want an error")
+	}
+}
+
+// TestSumEntriesPropagatesScanError asserts sumEntries itself (shared by
+// ResolveRefundContext and ResolveSettlementAmount) surfaces a Scan
+// failure rather than silently treating it as a zero sum.
+func TestSumEntriesPropagatesScanError(t *testing.T) {
+	wantErr := errors.New("scan boom")
+	db := &fakeDB{row: fakeRow{scan: func(dest ...any) error { return wantErr }}}
+
+	if _, err := sumEntries(context.Background(), db, 1, "txn_1", ""); err == nil {
+		t.Fatal("sumEntries() = nil error, want an error")
+	} else if !errors.Is(err, wantErr) {
+		t.Errorf("sumEntries() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestResolveRefundContextPropagatesAccountResolutionError asserts
+// ResolveRefundContext surfaces a failure resolving the capture accounts
+// (the same failure TestResolveCaptureAccountsPropagatesGatewayFeeRevenueLookupError
+// exercises directly, but here through ResolveRefundContext's own wrapping).
+func TestResolveRefundContextPropagatesAccountResolutionError(t *testing.T) {
+	conn := &fakeRefundConn{tx: &fakeTx{}, accounts: map[string]Account{}}
+
+	_, err := ResolveRefundContext(context.Background(), conn, "mch_1", "txn_capture_1")
+	if err == nil {
+		t.Fatal("ResolveRefundContext() = nil error, want an error when capture accounts can't be resolved")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("ResolveRefundContext() error = %v, want it to wrap sql.ErrNoRows", err)
+	}
+}
+
+// TestResolveRefundContextPropagatesSumEntriesErrors asserts each of
+// ResolveRefundContext's 3 sumEntries reads (the original capture's gross
+// leg, its fee leg, and prior refunds' leg) surfaces its own failure --
+// exercised one at a time by injecting a failure at the corresponding
+// QueryRowContext call, 4th/5th/6th overall after the 3 account lookups
+// (2 GetAccountByCode + 1 EnsureMerchantPayableAccount) ResolveCaptureAccounts
+// issues first.
+func TestResolveRefundContextPropagatesSumEntriesErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		call int
+	}{
+		{"original capture gross leg", 4},
+		{"original capture fee leg", 5},
+		{"prior refunds leg", 6},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wantErr := fmt.Errorf("boom reading %s", c.name)
+			conn := &errOnCallConn{inner: refundTestConn("mch_1", 100000, 2500, 0), n: c.call, err: wantErr}
+
+			_, err := ResolveRefundContext(context.Background(), conn, "mch_1", "txn_capture_1")
+			if err == nil {
+				t.Fatal("ResolveRefundContext() = nil error, want an error")
+			}
+			if !errors.Is(err, wantErr) {
+				t.Errorf("ResolveRefundContext() error = %v, want it to wrap %v", err, wantErr)
+			}
+		})
 	}
 }
 

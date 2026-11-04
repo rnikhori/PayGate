@@ -40,6 +40,14 @@ type fakeTx struct {
 	claimConflict       bool
 	existingFingerprint string
 	queryRowErr         error
+
+	// selectErr, when set, makes the 2nd QueryRowContext call (the
+	// follow-up SELECT claimTransactionRef issues after a claimConflict's
+	// simulated sql.ErrNoRows) fail with this error, rather than scanning
+	// back existingFingerprint -- simulating a read-back failure (e.g. a
+	// connection drop) distinct from the 1st call failing (queryRowErr)
+	// and distinct from the 1st call finding no conflict at all.
+	selectErr error
 }
 
 func (tx *fakeTx) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
@@ -86,6 +94,9 @@ func (tx *fakeTx) QueryRowContext(_ context.Context, query string, args ...any) 
 	if tx.claimConflict {
 		if call == 1 {
 			return fakeRow{scan: func(dest ...any) error { return sql.ErrNoRows }}
+		}
+		if tx.selectErr != nil {
+			return fakeRow{scan: func(dest ...any) error { return tx.selectErr }}
 		}
 		return fakeRow{scan: scanString(tx.existingFingerprint)}
 	}
@@ -397,6 +408,61 @@ func TestPostJournalEntryTxRetryWithDifferentEntriesIsRejected(t *testing.T) {
 	}
 	if len(tx.execCalls) != 0 {
 		t.Errorf("PostJournalEntryTx called ExecContext %d time(s) for a conflicting retry, want 0", len(tx.execCalls))
+	}
+}
+
+// TestPostJournalEntryReturnsErrorWhenClaimReadBackFails asserts a failure
+// reading back an already-claimed transaction_ref's fingerprint (the
+// follow-up SELECT claimTransactionRef issues after finding a conflict on
+// the claiming INSERT) is surfaced as an error and rolls back -- distinct
+// from TestPostJournalEntryReturnsErrorWhenClaimFails, which fails the 1st
+// (claiming) query rather than this 2nd (read-back) one.
+func TestPostJournalEntryReturnsErrorWhenClaimReadBackFails(t *testing.T) {
+	wantErr := errors.New("connection reset mid read-back")
+	tx := &fakeTx{claimConflict: true, selectErr: wantErr}
+	db := &fakeBeginner{tx: tx}
+
+	entries := balancedEntries("txn_post_claim_readback_fail")
+	err := PostJournalEntry(context.Background(), db, "txn_post_claim_readback_fail", entries)
+	if err == nil {
+		t.Fatal("PostJournalEntry() = nil error, want an error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("PostJournalEntry() error = %v, want it to wrap %v", err, wantErr)
+	}
+	if len(tx.execCalls) != 0 {
+		t.Error("PostJournalEntry called ExecContext despite the claim read-back failing")
+	}
+	if !tx.rolledBack {
+		t.Error("PostJournalEntry did not roll back after the claim read-back failed")
+	}
+}
+
+// TestPostJournalEntryTxRejectsUnbalancedEntriesWithoutTouchingDB is
+// TestPostJournalEntryRejectsUnbalancedEntriesWithoutTouchingDB's
+// counterpart for PostJournalEntryTx: prepareEntries must reject an
+// unbalanced set before PostJournalEntryTx ever calls QueryRowContext or
+// ExecContext against the caller's tx.
+func TestPostJournalEntryTxRejectsUnbalancedEntriesWithoutTouchingDB(t *testing.T) {
+	tx := &fakeTx{}
+
+	entries := []Entry{
+		{AccountID: 1, Amount: 10000, Currency: "INR"},
+		{AccountID: 2, Amount: -9000, Currency: "INR"},
+	}
+
+	err := PostJournalEntryTx(context.Background(), tx, "txn_posttx_unbalanced", entries)
+	if err == nil {
+		t.Fatal("PostJournalEntryTx() = nil error, want an error for unbalanced entries")
+	}
+	if !errors.Is(err, ErrUnbalancedTransaction) {
+		t.Errorf("PostJournalEntryTx() error = %v, want it to wrap ErrUnbalancedTransaction", err)
+	}
+	if len(tx.queryRowCalls) != 0 {
+		t.Error("PostJournalEntryTx called QueryRowContext for unbalanced entries (should fail before claiming transaction_ref)")
+	}
+	if len(tx.execCalls) != 0 {
+		t.Error("PostJournalEntryTx called ExecContext for unbalanced entries (partial write risk)")
 	}
 }
 

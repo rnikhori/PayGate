@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -94,4 +95,34 @@ func TestEnsureMerchantPayableAccountPropagatesScanError(t *testing.T) {
 	if err == nil {
 		t.Fatal("EnsureMerchantPayableAccount returned nil error, want the wrapped scan error")
 	}
+}
+
+// errOnCallConn wraps another Conn, injecting err on exactly the n-th
+// QueryRowContext call (1-indexed) this run makes and delegating every
+// other QueryRowContext call -- and every BeginTx call -- to inner
+// unchanged.
+//
+// This is what lets issue-20's error-path tests exercise "the Kth query a
+// multi-step Resolve*/Post* function issues fails" for whichever K a given
+// branch needs, against the exact same fakeCaptureConn/fakeRefundConn/
+// fakeSettlementConn fixtures the happy-path tests in capture_test.go,
+// refund_test.go, and settlement_test.go already build, rather than each
+// needing its own bespoke fake.
+type errOnCallConn struct {
+	inner Conn
+	n     int
+	err   error
+	calls int
+}
+
+func (c *errOnCallConn) QueryRowContext(ctx context.Context, query string, args ...any) Row {
+	c.calls++
+	if c.calls == c.n {
+		return fakeRow{scan: func(...any) error { return c.err }}
+	}
+	return c.inner.QueryRowContext(ctx, query, args...)
+}
+
+func (c *errOnCallConn) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) {
+	return c.inner.BeginTx(ctx, opts)
 }

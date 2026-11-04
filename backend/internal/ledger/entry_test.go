@@ -55,6 +55,16 @@ func TestValidateBalancedTransactionRejectsUnbalancedSum(t *testing.T) {
 	}
 }
 
+func TestValidateBalancedTransactionRejectsEmptyTransactionRef(t *testing.T) {
+	entries := []Entry{
+		{AccountID: 1, Amount: 10000, Currency: "INR"},
+		{AccountID: 2, Amount: -10000, Currency: "INR"},
+	}
+	if err := ValidateBalancedTransaction(entries); err == nil {
+		t.Error("ValidateBalancedTransaction() = nil error, want an error when the first entry's transaction_ref is empty")
+	}
+}
+
 func TestValidateBalancedTransactionRejectsMismatchedTransactionRef(t *testing.T) {
 	entries := []Entry{
 		{TransactionRef: "txn_5", AccountID: 1, Amount: 10000, Currency: "INR"},

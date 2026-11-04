@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -32,17 +34,25 @@ type fakeSettlementConn struct {
 }
 
 func (f *fakeSettlementConn) QueryRowContext(_ context.Context, query string, args ...any) Row {
+	// An account-code lookup/upsert (GetAccountByCode, EnsureMerchantPayableAccount)
+	// always passes exactly the code as its 1st arg -- a miss here must
+	// report sql.ErrNoRows directly, the same way fakeCaptureConn and
+	// fakeRefundConn do, rather than falling through to the sumEntries-
+	// style handling below, which assumes a 2nd (accountID-keyed) arg that
+	// a bare code lookup never has.
 	if code, ok := args[0].(string); ok {
-		if a, found := f.accounts[code]; found {
-			return fakeRow{scan: func(dest ...any) error {
-				*dest[0].(*int64) = a.ID
-				*dest[1].(*string) = a.Code
-				*dest[2].(*string) = string(a.Type)
-				*dest[3].(*string) = a.Name
-				*dest[4].(*time.Time) = a.CreatedAt
-				return nil
-			}}
+		a, found := f.accounts[code]
+		if !found {
+			return fakeRow{scan: func(...any) error { return sql.ErrNoRows }}
 		}
+		return fakeRow{scan: func(dest ...any) error {
+			*dest[0].(*int64) = a.ID
+			*dest[1].(*string) = a.Code
+			*dest[2].(*string) = string(a.Type)
+			*dest[3].(*string) = a.Name
+			*dest[4].(*time.Time) = a.CreatedAt
+			return nil
+		}}
 	}
 
 	accountID, _ := args[0].(int64)
@@ -205,6 +215,149 @@ func TestResolveSettlementAmountNeverNegative(t *testing.T) {
 	}
 	if got != 0 {
 		t.Errorf("ResolveSettlementAmount() = %d, want 0", got)
+	}
+}
+
+// TestResolveSettlementClearingAccountsPropagatesLookupErrors mirrors
+// TestResolveCaptureAccountsPropagatesGatewayFeeRevenueLookupError /
+// ...MerchantPayableLookupError for settlement's own 2-account resolver:
+// either the fixed settlement_clearing lookup or the merchant payable
+// upsert failing must surface, not be swallowed.
+func TestResolveSettlementClearingAccountsPropagatesLookupErrors(t *testing.T) {
+	t.Run("settlement_clearing lookup fails", func(t *testing.T) {
+		conn := &fakeSettlementConn{tx: &fakeTx{}, accounts: map[string]Account{}}
+		if _, err := ResolveSettlementClearingAccounts(context.Background(), conn, "mch_1"); err == nil {
+			t.Error("ResolveSettlementClearingAccounts() = nil error, want an error when settlement_clearing can't be resolved")
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("ResolveSettlementClearingAccounts() error = %v, want it to wrap sql.ErrNoRows", err)
+		}
+	})
+
+	t.Run("merchant payable upsert fails", func(t *testing.T) {
+		conn := &fakeSettlementConn{tx: &fakeTx{}, accounts: map[string]Account{
+			SettlementClearingAccountCode: {ID: 4, Code: SettlementClearingAccountCode, Type: AssetAccount},
+		}}
+		if _, err := ResolveSettlementClearingAccounts(context.Background(), conn, "mch_1"); err == nil {
+			t.Error("ResolveSettlementClearingAccounts() = nil error, want an error when the merchant payable account can't be ensured")
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("ResolveSettlementClearingAccounts() error = %v, want it to wrap sql.ErrNoRows", err)
+		}
+	})
+}
+
+// TestResolveSettlementAmountPropagatesQueryErrors exercises
+// ResolveSettlementAmount's own 2 QueryRowContext calls -- the "captured
+// before cutoff" sum (1st) and the "already cleared" sum (2nd) -- each
+// failing in turn.
+func TestResolveSettlementAmountPropagatesQueryErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		call int
+	}{
+		{"captured-before-cutoff sum", 1},
+		{"already-cleared sum", 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wantErr := fmt.Errorf("boom reading %s", c.name)
+			conn := &errOnCallConn{inner: settlementTestConn("mch_1", 100000, 0, 0), n: c.call, err: wantErr}
+
+			_, err := ResolveSettlementAmount(context.Background(), conn, 3, "mch_1", time.Now())
+			if err == nil {
+				t.Fatal("ResolveSettlementAmount() = nil error, want an error")
+			}
+			if !errors.Is(err, wantErr) {
+				t.Errorf("ResolveSettlementAmount() error = %v, want it to wrap %v", err, wantErr)
+			}
+		})
+	}
+}
+
+// TestPostSettlementClearingPropagatesAccountResolutionError asserts
+// PostSettlementClearing itself surfaces a ResolveSettlementClearingAccounts
+// failure (here: settlement_clearing missing).
+func TestPostSettlementClearingPropagatesAccountResolutionError(t *testing.T) {
+	conn := &fakeSettlementConn{tx: &fakeTx{}, accounts: map[string]Account{}}
+
+	_, err := PostSettlementClearing(context.Background(), conn, "batch_1", "mch_1", time.Now(), "INR")
+	if err == nil {
+		t.Fatal("PostSettlementClearing() = nil error, want an error when settlement accounts can't be resolved")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("PostSettlementClearing() error = %v, want it to wrap sql.ErrNoRows", err)
+	}
+	if conn.beginCalls != 0 {
+		t.Error("PostSettlementClearing called BeginTx despite account resolution failing")
+	}
+}
+
+// TestPostSettlementClearingPropagatesIdempotencyCheckError asserts a
+// failure reading back whether this batch/merchant was already posted
+// (the 3rd QueryRowContext call: 2 account lookups, then the idempotency
+// sumEntries) is surfaced rather than silently treated as "not yet posted".
+func TestPostSettlementClearingPropagatesIdempotencyCheckError(t *testing.T) {
+	wantErr := errors.New("boom checking idempotency")
+	conn := &errOnCallConn{inner: settlementTestConn("mch_1", 100000, 0, 0), n: 3, err: wantErr}
+
+	_, err := PostSettlementClearing(context.Background(), conn, "batch_1", "mch_1", time.Now(), "INR")
+	if err == nil {
+		t.Fatal("PostSettlementClearing() = nil error, want an error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("PostSettlementClearing() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestPostSettlementClearingPropagatesResolveSettlementAmountError asserts
+// a failure inside ResolveSettlementAmount (the 4th QueryRowContext call --
+// after the 2 account lookups and the idempotency check succeed) is
+// surfaced by PostSettlementClearing.
+func TestPostSettlementClearingPropagatesResolveSettlementAmountError(t *testing.T) {
+	wantErr := errors.New("boom resolving settlement amount")
+	conn := &errOnCallConn{inner: settlementTestConn("mch_1", 100000, 0, 0), n: 4, err: wantErr}
+
+	_, err := PostSettlementClearing(context.Background(), conn, "batch_1", "mch_1", time.Now(), "INR")
+	if err == nil {
+		t.Fatal("PostSettlementClearing() = nil error, want an error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("PostSettlementClearing() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestPostSettlementClearingPropagatesBuildEntriesErrorWithoutWriting
+// asserts an invalid currency (BuildSettlementClearingEntries' own check)
+// is rejected without ever calling BeginTx -- there is a positive amount
+// eligible to clear, so this is the one error BuildSettlementClearingEntries
+// can still produce once PostSettlementClearing has already checked amount
+// > 0 itself.
+func TestPostSettlementClearingPropagatesBuildEntriesErrorWithoutWriting(t *testing.T) {
+	conn := settlementTestConn("mch_1", 100000, 0, 0)
+
+	_, err := PostSettlementClearing(context.Background(), conn, "batch_1", "mch_1", time.Now(), "inr")
+	if err == nil {
+		t.Fatal("PostSettlementClearing() = nil error, want an error for an invalid currency")
+	}
+	if conn.beginCalls != 0 {
+		t.Error("PostSettlementClearing called BeginTx despite BuildSettlementClearingEntries failing")
+	}
+}
+
+// TestPostSettlementClearingPropagatesPostJournalEntryError asserts a
+// failure in the final PostJournalEntry call (here: the entries insert
+// itself failing) is surfaced, rather than the cleared amount being
+// returned as if it had actually posted.
+func TestPostSettlementClearingPropagatesPostJournalEntryError(t *testing.T) {
+	wantErr := errors.New("boom inserting journal entries")
+	conn := settlementTestConn("mch_1", 100000, 0, 0)
+	conn.tx.execErr = wantErr
+
+	_, err := PostSettlementClearing(context.Background(), conn, "batch_1", "mch_1", time.Now(), "INR")
+	if err == nil {
+		t.Fatal("PostSettlementClearing() = nil error, want an error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("PostSettlementClearing() error = %v, want it to wrap %v", err, wantErr)
 	}
 }
 

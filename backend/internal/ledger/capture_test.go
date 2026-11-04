@@ -228,6 +228,69 @@ func TestPostCapturePropagatesMissingAccountError(t *testing.T) {
 	}
 }
 
+// TestResolveCaptureAccountsPropagatesGatewayFeeRevenueLookupError is
+// TestPostCapturePropagatesMissingAccountError's counterpart for the 2nd of
+// ResolveCaptureAccounts' 3 lookups (gateway_fee_revenue) instead of the
+// 1st (customer_suspense) -- both must surface the lookup failure, not
+// just the first one checked.
+func TestResolveCaptureAccountsPropagatesGatewayFeeRevenueLookupError(t *testing.T) {
+	conn := &fakeCaptureConn{tx: &fakeTx{}, accounts: map[string]Account{
+		CustomerSuspenseAccountCode: {ID: 1, Code: CustomerSuspenseAccountCode, Type: LiabilityAccount},
+	}}
+
+	_, err := ResolveCaptureAccounts(context.Background(), conn, "mch_1")
+	if err == nil {
+		t.Fatal("ResolveCaptureAccounts() = nil error, want an error when gateway_fee_revenue can't be resolved")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("ResolveCaptureAccounts() error = %v, want it to wrap sql.ErrNoRows", err)
+	}
+}
+
+// TestResolveCaptureAccountsPropagatesMerchantPayableLookupError is the
+// same, for the 3rd lookup (the merchant's own payable account).
+func TestResolveCaptureAccountsPropagatesMerchantPayableLookupError(t *testing.T) {
+	conn := &fakeCaptureConn{tx: &fakeTx{}, accounts: map[string]Account{
+		CustomerSuspenseAccountCode:  {ID: 1, Code: CustomerSuspenseAccountCode, Type: LiabilityAccount},
+		GatewayFeeRevenueAccountCode: {ID: 2, Code: GatewayFeeRevenueAccountCode, Type: RevenueAccount},
+	}}
+
+	_, err := ResolveCaptureAccounts(context.Background(), conn, "mch_1")
+	if err == nil {
+		t.Fatal("ResolveCaptureAccounts() = nil error, want an error when the merchant's payable account can't be ensured")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("ResolveCaptureAccounts() error = %v, want it to wrap sql.ErrNoRows", err)
+	}
+}
+
+// TestBuildCaptureEntriesRejectsInvalidFeeSchedule asserts
+// BuildCaptureEntries itself rejects an illegal FeeSchedule (not just
+// FeeSchedule.Validate in isolation, see TestFeeScheduleValidateRejectsNegativeAndTooLarge) --
+// the check BuildCaptureEntries runs before computing any fee.
+func TestBuildCaptureEntriesRejectsInvalidFeeSchedule(t *testing.T) {
+	accounts := CaptureAccounts{CustomerSuspense: Account{ID: 1}, MerchantPayable: Account{ID: 2}, GatewayFeeRevenue: Account{ID: 3}}
+	if _, err := BuildCaptureEntries(accounts, 100000, "INR", FeeSchedule{BasisPoints: -1}); err == nil {
+		t.Error("BuildCaptureEntries(... FeeSchedule{-1}) = nil error, want an error")
+	}
+}
+
+// TestPostCaptureTxPropagatesBuildEntriesErrorWithoutWriting asserts
+// PostCaptureTx surfaces a BuildCaptureEntries failure (here: an invalid
+// currency) without ever calling ExecContext against the caller's tx.
+func TestPostCaptureTxPropagatesBuildEntriesErrorWithoutWriting(t *testing.T) {
+	tx := &fakeTx{}
+	accounts := CaptureAccounts{CustomerSuspense: Account{ID: 1}, MerchantPayable: Account{ID: 2}, GatewayFeeRevenue: Account{ID: 3}}
+
+	err := PostCaptureTx(context.Background(), tx, "txn_capture_tx_bad_currency", accounts, 100000, "inr", FeeSchedule{BasisPoints: 200})
+	if err == nil {
+		t.Fatal("PostCaptureTx() = nil error, want an error for an invalid currency")
+	}
+	if len(tx.execCalls) != 0 {
+		t.Error("PostCaptureTx called ExecContext despite BuildCaptureEntries failing")
+	}
+}
+
 func TestPostCaptureTxDoesNotCommitOrRollback(t *testing.T) {
 	tx := &fakeTx{}
 	accounts := CaptureAccounts{
