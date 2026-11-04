@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadFailsFastWhenAllRequiredVarsMissing(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
@@ -38,6 +41,9 @@ func TestLoadAppliesDefaultsWhenOptionalVarsUnset(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("cfg.LogLevel = %q, want %q", cfg.LogLevel, "info")
 	}
+	if cfg.LedgerIntegrityCheckInterval != 24*time.Hour {
+		t.Errorf("cfg.LedgerIntegrityCheckInterval = %v, want 24h", cfg.LedgerIntegrityCheckInterval)
+	}
 }
 
 func TestLoadUsesExplicitOverridesOverDefaults(t *testing.T) {
@@ -61,5 +67,29 @@ func TestLoadUsesExplicitOverridesOverDefaults(t *testing.T) {
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("cfg.LogLevel = %q, want %q", cfg.LogLevel, "debug")
+	}
+}
+
+func TestLoadParsesLedgerIntegrityCheckInterval(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/paygate?sslmode=disable")
+	t.Setenv("WEBHOOK_SIGNING_SECRET", "s3cret")
+	t.Setenv("LEDGER_INTEGRITY_CHECK_INTERVAL", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+	if cfg.LedgerIntegrityCheckInterval != 30*time.Minute {
+		t.Errorf("cfg.LedgerIntegrityCheckInterval = %v, want 30m", cfg.LedgerIntegrityCheckInterval)
+	}
+}
+
+func TestLoadFailsFastOnInvalidLedgerIntegrityCheckInterval(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/paygate?sslmode=disable")
+	t.Setenv("WEBHOOK_SIGNING_SECRET", "s3cret")
+	t.Setenv("LEDGER_INTEGRITY_CHECK_INTERVAL", "not-a-duration")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() returned nil error, want an error for an unparseable LEDGER_INTEGRITY_CHECK_INTERVAL")
 	}
 }

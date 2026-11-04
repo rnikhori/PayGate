@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -30,6 +31,16 @@ type Config struct {
 	// LogLevel is the minimum log level to emit (debug|info|warn|error).
 	// Defaults to "info".
 	LogLevel string
+
+	// LedgerIntegrityCheckInterval is how often the nightly ledger
+	// integrity job (backend/internal/jobs.Scheduler, built on
+	// backend/internal/ledger.CheckIntegrity) re-runs. Defaults to 24h
+	// ("nightly") when unset; this is that job's "configurable" half of
+	// its "Job runs on a schedule (configurable, default nightly)"
+	// acceptance criterion -- the on-demand half is calling
+	// jobs.LedgerIntegrityJob.RunOnce directly, which does not go through
+	// this interval at all.
+	LedgerIntegrityCheckInterval time.Duration
 }
 
 // requiredVar names an environment variable that Load must find set and
@@ -73,12 +84,42 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: missing required environment variable(s): %s (see backend/.env.example)", strings.Join(missing, ", "))
 	}
 
+	interval, err := getenvDurationDefault("LEDGER_INTEGRITY_CHECK_INTERVAL", defaultLedgerIntegrityCheckInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.LedgerIntegrityCheckInterval = interval
+
 	return cfg, nil
 }
+
+// defaultLedgerIntegrityCheckInterval mirrors
+// backend/internal/jobs.DefaultLedgerIntegrityCheckInterval (24h,
+// "nightly") -- kept as its own literal here, rather than importing jobs
+// from config, so configuration loading never depends on the job package it
+// configures.
+const defaultLedgerIntegrityCheckInterval = 24 * time.Hour
 
 func getenvDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+// getenvDurationDefault parses key as a time.Duration (e.g. "24h", "30m"),
+// returning fallback when key is unset or empty. An explicitly set but
+// unparseable value fails fast, the same way a missing required variable
+// does, rather than silently falling back to fallback and masking a typo'd
+// deployment setting.
+func getenvDurationDefault(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s=%q is not a valid duration: %w", key, v, err)
+	}
+	return d, nil
 }
